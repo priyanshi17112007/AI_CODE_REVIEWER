@@ -1,6 +1,10 @@
 import os
 from dotenv import load_dotenv
-from crewai import Agent, Crew, Process, Task,LLM
+from pydantic import BaseModel
+from typing import List
+from crewai import Agent, Crew, Process, Task, LLM
+from schemas import QAReport, SecurityReport
+from prompts import REVIEWGUARD_SYSTEM_PROMPT
 
 try:
     import crewai.llms.cache as _crewai_cache
@@ -11,67 +15,113 @@ except Exception:
 # Load environment variables
 load_dotenv()
 
-# Configure your Groq model instance
+# Configure your Groq model instance with optimal deterministic parameters
 llm_instance = LLM(
     model="groq/llama-3.3-70b-versatile",
-    temperature=0.1,
+    temperature=0.0,  # Forces precise compliance with Pydantic JSON schemas
     api_key=os.getenv("GROQ_API_KEY")
 )
 
-async def analyze_code_with_crew(code_content: str):
+
+async def analyze_code_with_crew(code_content: str, filename: str):
+    # Determine what language grammar rules the AI should execute
+    file_extension = filename.split('.')[-1].upper() if '.' in filename else "Unknown"
+    
+    # -----------------------------------------------------------------
     # 1. Define Specialized Cyber Security & QA Agents
+    # -----------------------------------------------------------------
     security_auditor = Agent(
-        role="Senior Application Security Engineer",
-        goal="Identify severe vulnerabilities, injection flaws, OWASP Top 10, and hardcoded secrets.",
-        backstory="An elite ethical hacker with an eye for finding hidden security exploits and vulnerabilities in source code.",
-        verbose=False,
-        llm=llm_instance,
-        temperature=0.1  # Keeps agent deterministic and strict
+        role="ReviewGuard Senior Application Security Engineer & AI Auditor",
+        goal=(
+            "Identify severe vulnerabilities, injection flaws, OWASP Top 10 exploits, "
+            "hardcoded secrets, and genuine cryptographic flaws in source code structures."
+        ),
+        backstory=(f"{REVIEWGUARD_SYSTEM_PROMPT}\nFocus specifically on checking logical statements line-by-line."
+            "An elite ethical hacker with an eye for spotting hidden security exploits and vulnerabilities. "
+            "NOTE: The incoming source code has already passed through a deterministic AST/Regex filter "
+            "that strips out user comments and docstrings to neutralize comment-based prompt injections. "
+            "Therefore, evaluate ONLY the logical code statements. Do not complain about missing comments. "
+            "You must catch weak cryptography (such as raw MD5/SHA1 usage) and dangerous input handlers. "
+            "Do not flag standard runtime crashes as Denial of Service unless an external attacker can "
+            "repeatedly trigger them remotely to completely crash a live container environment."
+        ),
+        verbose=True,
+        llm=llm_instance
     )
 
     qa_engineer = Agent(
-        role="Principal Quality Assurance & Syntax Auditor & Performance Engineer",
-        goal="Detect syntax anomalies, faulty conditional logic, variable scope errors, and structural bugs & Uncover logical bugs, data loops, infinite loops, and heavy runtime complexities (O(n^2) issues).",
-        backstory="A precise code linter and compiler design expert. You excel at spotting human errors "
-            "such as missing colons, bracket mismatches, incorrect comparison operators, "
-            "uninitialized variables, and flawed conditional logic paths."
-             "A strict code optimizer specializing in structural runtime failures and logic breakages.",
-        verbose=False,
-        llm=llm_instance,
-        temperature=0.1  # Prevents creative deviations from JSON formatting
+        role="ReviewGuard Static Code Analyzer and Compiler Emulator",
+        goal=(
+            "Identify compilation-blocking syntax errors, reference typos, variable scoping bugs, "
+            "structural architectural flaws, algorithmic inefficiencies, and resource leaks."
+        ),
+        backstory=(
+            "You act as a razor-sharp local interpreter and pre-commit linter. Because code comments "
+            "and inline descriptions are stripped away upstream by a security boundary filter, you must "
+            "analyze the structural syntax elements line-by-line. If a runtime engine would throw an immediate "
+            "syntax error, reference exception, or resource leak error (unclosed database loops, missing context managers), "
+            "that is your highest priority capture. "
+            "PRE-FLIGHT VALIDATION RULE: Verify if the code structure actually matches the grammar of the provided file "
+            "extension. If there is a severe mismatch (e.g., raw C code inside a .js file), explicitly catalog it as an "
+            "Extension Mismatch error."
+        ),
+        verbose=True,
+        llm=llm_instance
     )
 
-    # 2. Assign Tasks with strict formatting requirements
+    # -----------------------------------------------------------------
+    # 2. Assign Tasks with strict field alignments matching main.py
+    # -----------------------------------------------------------------
     security_task = Task(
         description=(
-            f"Analyze this code block for security issues:\n\n{code_content}\n\n"
-            "Provide the response strictly as a JSON list of objects containing: "
-            "'severity' (High/Medium/Low), 'title', 'location', and 'description'. "
-            "Do not include markdown code block syntax."
+            f"Analyze this sanitized code block for SEVERE security vulnerabilities:\n\n{code_content}\n\n"
+            "CRITICAL ENGINE GUARDRAILS:\n"
+            "- Do NOT classify missing syntax, missing parentheses, or undefined variables as security exploits. Those are runtime bugs.\n"
+            "- Do NOT flag parameters as 'Injection Flaws' unless the code directly interacts with databases, raw OS shells, or unescaped HTML layouts.\n"
+            "- Ensure your JSON schema output aligns precisely with these key fields: 'title', 'category', 'severity', 'location', 'description', and 'remediation'.\n"
+            "- If zero true security vulnerabilities exist, return an empty list: []"
         ),
-        expected_output="A raw valid JSON array representing security vulnerabilities.",
-        agent=security_auditor
+        expected_output="A raw valid JSON object matching the SecurityReport schema structure.",
+        agent=security_auditor,
+        output_json=SecurityReport
     )
-    
 
     qa_task = Task(
-        description=(f"Analyze this code block for logical bugs, infinite loops, or deep nesting bottlenecks:\n\n{code_content}\n\nProvide the response strictly as a JSON list of objects containing: 'bug_type', 'impact', and 'fix_suggestion'. Do not include markdown code block syntax."
-                     "Specifically inspect for:\n"
-            "- Syntax Errors: Missing punctuation, indentation flaws, unclosed strings.\n"
-            "- Conditional Errors: Wrong operators (e.g., using '=' instead of '=='), flawed 'if/else' logic, or off-by-one loop limits.\n"
-            "- Semantic Errors: Unused variables, undefined function calls, type mismatches.\n\n"
-            "Provide the response strictly as a JSON list of objects containing: 'bug_type', 'impact', and 'fix_suggestion'. "
-            "Do not include markdown code block syntax."),
-        expected_output="A raw valid JSON array representing structural code bugs.",
-        agent=qa_engineer
+        description=(
+            "Before reporting any runtime exception (e.g., ZeroDivisionError, IndexError, KeyError, AttributeError), analyze the control flow"
+            f"Perform a rigorous static analysis and structural evaluation on this target code block.\n"
+            f"TARGET LANGUAGE GRAMMAR CONTEXT: {file_extension}\n\n"
+            f"CODE SUBMISSION:\n{code_content}\n\n"
+            "REQUIRED JSON STRUCTURE RULES:\n"
+            f"1. 'bug_type': Write the exact technical compiler/runtime error name specific to {file_extension} (e.g., 'IndentationError', 'NullPointerException', 'ResourceLeak').\n"
+            "2. 'line_number': Provide the exact integer line number where the bug originates.\n"
+            "3. 'impact': Must be classified as 'Compilation Error', 'Runtime Error', 'Performance Bottleneck', or 'Informational'.\n"
+            "4. 'description': Tell the user exactly why the code crashes or degrades performance under this language's core specifications.\n"
+            "5. 'fix_suggestion': Provide the exact, executable correction line of code matching the target language's format. Do NOT leave this blank or null."
+        ),
+        expected_output="A perfectly populated JSON report matching the QAReport schema container rules.",
+        agent=qa_engineer,
+        output_json=QAReport
+    )
+    
+    fix_generator = Agent(
+    role="Code Remediation Specialist",
+    goal="Generate precise, executable code patches for identified errors.",
+    backstory="You are an expert in automated refactoring. You output code in diff format.",
+    llm=llm_instance
     )
 
+    
+
+    # -----------------------------------------------------------------
     # 3. Assemble and Kick off the Swarm Sequential Pipeline
+    # -----------------------------------------------------------------
     crew = Crew(
         agents=[security_auditor, qa_engineer],
         tasks=[security_task, qa_task],
         process=Process.sequential
     )
 
+    # Execute the asynchronous processing flow mapped out by main.py
     result = await crew.kickoff_async()
     return result
