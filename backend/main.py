@@ -9,13 +9,13 @@ from dotenv import load_dotenv
 import os
 
 # Internal project schema and helper imports
-from schemas import QAReport, SecurityReport  
-from agents import analyze_code_with_crew
-from validator import run_deterministic_syntax_check 
+from backend.schemas import QAReport, SecurityReport  
+from  backend.agents import analyze_code_with_crew
+from backend.validator import run_deterministic_syntax_check 
 from crewai import Crew
-from database import SessionLocal, ReviewRecord
+from backend.database import SessionLocal, ReviewRecord
 import openai
-from prompts import REVIEWGUARD_SYSTEM_PROMPT
+from backend.prompts import REVIEWGUARD_SYSTEM_PROMPT
 
 # Load environment variables from .env file before anything else runs
 load_dotenv()

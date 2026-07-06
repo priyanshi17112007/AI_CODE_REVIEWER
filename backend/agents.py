@@ -3,8 +3,8 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 from typing import List
 from crewai import Agent, Crew, Process, Task, LLM
-from schemas import QAReport, SecurityReport
-from prompts import REVIEWGUARD_SYSTEM_PROMPT
+from backend.schemas import QAReport, SecurityReport
+from backend.prompts import REVIEWGUARD_SYSTEM_PROMPT
 
 try:
     import crewai.llms.cache as _crewai_cache
